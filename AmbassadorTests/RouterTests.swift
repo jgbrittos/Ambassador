@@ -67,9 +67,6 @@ class RouterTests: XCTestCase {
             receivedCaptures = environ["ambassador.router_captures"] as? [String]
             return Data("email".utf8)
         }
-        router["/foo"] = DataResponse() { environ -> Data in
-            return Data("foo".utf8)
-        }
 
         var receivedStatus: [String] = []
         let startResponse = { (status: String, headers: [(String, String)]) in
@@ -111,5 +108,38 @@ class RouterTests: XCTestCase {
         XCTAssertEqual(String(bytes: receivedData[1], encoding: String.Encoding.utf8), "email")
         XCTAssertEqual(receivedData.last?.count, 0)
         XCTAssertEqual(receivedCaptures ?? [], ["fang@envoy.com", "ABCD1234"])
+    }
+    
+    func testRouterWithSimilarEndpoints() {
+        var receivedData: [Data] = []
+        let sendBody = { (data: Data) in
+            if !data.isEmpty {
+                receivedData.append(data)
+            }
+        }
+        
+        let router = Router()
+        
+        router["foo/bar"] = DataResponse() { _ -> Data in
+            return Data("hello".utf8)
+        }
+        router["foo/bar/ambassador/1/0\\?(?=.*param=\\d+)(?=.+&)(?=.*anotherParam=\\d+).*"] = DataResponse() { environ -> Data in//\\?(?=.*param=\\d+)(?=.+&)(?=.*anotherParam=\\d+).*
+            return Data((environ["QUERY_STRING"] as? String ?? "world").utf8)
+        }
+        
+        let environ: [String: Any] = ["REQUEST_METHOD": "GET",
+                                      "SCRIPT_NAME": "",
+                                      "PATH_INFO": "foo/bar"]
+        
+        let environ2: [String: Any] = ["REQUEST_METHOD": "GET",
+                                       "SCRIPT_NAME": "",
+                                       "PATH_INFO": "foo/bar/ambassador/1/0",
+                                       "QUERY_STRING": "param=1&anotherParam=30"]
+
+        router.app(environ, startResponse: { _, _ in }, sendBody: sendBody)
+        XCTAssertEqual(String(bytes: receivedData.last!, encoding: String.Encoding.utf8), "hello")
+        
+        router.app(environ2, startResponse: { _, _ in }, sendBody: sendBody)
+        XCTAssertEqual(String(bytes: receivedData.last!, encoding: String.Encoding.utf8), "param=1&anotherParam=30")
     }
 }
